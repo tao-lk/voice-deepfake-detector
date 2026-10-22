@@ -34,6 +34,8 @@ foreach ($f in $prune) {
 Write-Host ("  freed {0:N1} MB" -f ($freed / 1MB))
 
 Write-Host "[3/3] done" -ForegroundColor Green
+# 随包附带说明文档
+Copy-Item (Join-Path $root "介绍.txt"), (Join-Path $root "使用说明.txt") $distDir -Force
 $total = (Get-ChildItem $distDir -Recurse -File | Measure-Object Length -Sum).Sum
 $exe = Get-ChildItem $distDir -Filter *.exe | Select-Object -First 1
 Write-Host ("output: dist\{0}\{1}  size {2:N1} MB" -f (Split-Path $distDir -Leaf), $exe.Name, ($total / 1MB))
