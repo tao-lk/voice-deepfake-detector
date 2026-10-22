@@ -166,11 +166,12 @@ def preemphasis(x: np.ndarray, c: float = PREEMPH) -> np.ndarray:
     return y
 
 
-def make_model_input(audio: np.ndarray) -> np.ndarray:
-    y = preemphasis(audio.astype(np.float32, copy=False))
-    n = y.shape[0]
-    if n == 0:
+def make_model_input(audio: np.ndarray, win_start: int = 0) -> np.ndarray:
+    seg = audio[win_start:]
+    if seg.shape[0] == 0:
         raise RuntimeError("空音频")
+    y = preemphasis(seg.astype(np.float32, copy=False))
+    n = y.shape[0]
     if n < REQUIRED_SAMPLES:
         reps = REQUIRED_SAMPLES // n + 1
         y = np.tile(y, reps)
@@ -216,24 +217,29 @@ class DetectWorker(QThread):
     finished_ok = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
-    def __init__(self, file_path: str, parent=None):
+    def __init__(self, file_path: str, parent=None, audio=None, win_start: int = 0):
         super().__init__(parent)
         self.file_path = file_path
+        self.audio = audio
+        self.win_start = win_start
 
     def run(self):
         try:
             path = Path(self.file_path)
-            self.stage.emit("正在探测媒体信息…")
-            media = probe_media(path)
-
-            self.stage.emit("正在提取 16 kHz 单声道音频…")
-            audio = extract_audio(path)
+            if self.audio is not None:
+                audio = self.audio
+                media = {}
+            else:
+                self.stage.emit("正在探测媒体信息…")
+                media = probe_media(path)
+                self.stage.emit("正在提取 16 kHz 单声道音频…")
+                audio = extract_audio(path)
 
             need_load = _SESSION is None
             self.stage.emit("正在加载模型，请稍候…" if need_load else "正在推理…")
             sess, load_ms = get_session()
 
-            x = make_model_input(audio)
+            x = make_model_input(audio, self.win_start)
             self.stage.emit("正在推理…")
             t0 = time.perf_counter()
             logits = sess.run(None, {"wav": x[None, :]})[0][0]
@@ -247,6 +253,7 @@ class DetectWorker(QThread):
             self.finished_ok.emit({
                 "audio": audio,
                 "media": media,
+                "win_start": self.win_start,
                 "p_spoof": p_spoof,
                 "p_bona": p_bona,
                 "verdict": verdict,
@@ -262,18 +269,75 @@ class DetectWorker(QThread):
 # ---------------------------------------------------------------- 波形控件
 
 class WaveformWidget(QWidget):
+    window_moved = pyqtSignal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.audio = None
         self.peaks_min = None
         self.peaks_max = None
+        self.win_start = 0
+        self._dragging = False
         self.setMinimumHeight(int(150 * FONT_SCALE))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCursor(Qt.OpenHandCursor)
 
     def set_audio(self, audio: np.ndarray):
         self.audio = audio
+        self.win_start = 0
         self._compute_peaks()
         self.update()
+
+    def _win_len(self) -> int:
+        if self.audio is None:
+            return 0
+        return min(self.audio.shape[0], REQUIRED_SAMPLES)
+
+    def _clamp_win(self):
+        if self.audio is None:
+            self.win_start = 0
+            return
+        max_start = max(0, self.audio.shape[0] - self._win_len())
+        self.win_start = min(max(self.win_start, 0), max_start)
+
+    def _plot_rect(self):
+        pad_l, pad_r, pad_t, pad_b = 14, 14, int(26 * FONT_SCALE), int(24 * FONT_SCALE)
+        return QRectF(pad_l, pad_t, self.width() - pad_l - pad_r, self.height() - pad_t - pad_b)
+
+    def _x_to_sample(self, x: float) -> int:
+        rect = self._plot_rect()
+        frac = (x - rect.left()) / max(rect.width(), 1.0)
+        frac = min(max(frac, 0.0), 1.0)
+        return int(frac * self.audio.shape[0])
+
+    def mousePressEvent(self, event):
+        if self.audio is None or event.button() != Qt.LeftButton:
+            return
+        self._dragging = True
+        self.setCursor(Qt.ClosedHandCursor)
+        sample = self._x_to_sample(event.x())
+        win_len = self._win_len()
+        # 点在窗口外: 窗口跳到以点击处为中心; 点在窗口内: 进入拖拽
+        if not (self.win_start <= sample <= self.win_start + win_len):
+            self.win_start = sample - win_len // 2
+            self._clamp_win()
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging or self.audio is None:
+            return
+        rect = self._plot_rect()
+        frac = (event.x() - rect.left()) / max(rect.width(), 1.0)
+        frac = min(max(frac, 0.0), 1.0)
+        self.win_start = int(frac * self.audio.shape[0]) - self._win_len() // 2
+        self._clamp_win()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging and event.button() == Qt.LeftButton:
+            self._dragging = False
+            self.setCursor(Qt.OpenHandCursor)
+            self.window_moved.emit(self.win_start)
 
     def _compute_peaks(self, n: int = 1600):
         x = self.audio
@@ -292,8 +356,7 @@ class WaveformWidget(QWidget):
         w, h = self.width(), self.height()
         p.fillRect(0, 0, w, h, QColor(C_CARD2))
 
-        pad_l, pad_r, pad_t, pad_b = 14, 14, int(26 * FONT_SCALE), int(24 * FONT_SCALE)
-        rect = QRectF(pad_l, pad_t, w - pad_l - pad_r, h - pad_t - pad_b)
+        rect = self._plot_rect()
         if rect.height() < 10:
             p.end()
             return
@@ -308,17 +371,21 @@ class WaveformWidget(QWidget):
             return
 
         total = self.audio.shape[0]
-        win_end = min(total, REQUIRED_SAMPLES)
-        frac = win_end / total
+        win_len = self._win_len()
+        win_start = self.win_start
+        win_end = win_start + win_len
+        frac_a = win_start / total
+        frac_b = win_end / total
 
         # 分析窗口高亮
-        win_w = rect.width() * frac
+        hl_x = rect.left() + rect.width() * frac_a
+        hl_w = rect.width() * (frac_b - frac_a)
         hl = QColor(C_AMBER)
         hl.setAlpha(28)
-        p.fillRect(QRectF(rect.left(), rect.top() - 6, win_w, rect.height() + 12), hl)
+        p.fillRect(QRectF(hl_x, rect.top() - 6, hl_w, rect.height() + 12), hl)
         p.setPen(QPen(QColor(C_AMBER), 1, Qt.DashLine))
-        p.drawLine(QPointF(rect.left() + win_w, rect.top() - 6),
-                   QPointF(rect.left() + win_w, rect.bottom() + 6))
+        p.drawLine(QPointF(hl_x, rect.top() - 6), QPointF(hl_x, rect.bottom() + 6))
+        p.drawLine(QPointF(hl_x + hl_w, rect.top() - 6), QPointF(hl_x + hl_w, rect.bottom() + 6))
 
         # 中线
         p.setPen(QPen(QColor(C_BORDER), 1))
@@ -356,7 +423,7 @@ class WaveformWidget(QWidget):
         p.setFont(QFont("Microsoft YaHei UI", int(8 * FONT_SCALE)))
         p.setPen(QPen(QColor(C_AMBER)))
         p.drawText(QPointF(rect.left() + 6, rect.top() - int(8 * FONT_SCALE)),
-                   f"分析窗口 0–{MODEL_WINDOW_S:.2f}s")
+                   f"分析窗口 {win_start / SAMPLE_RATE:.2f}–{win_end / SAMPLE_RATE:.2f}s · 拖动可平移")
         dur = total / SAMPLE_RATE
         p.setPen(QPen(QColor(C_DIM)))
         p.drawText(QRectF(rect.left(), h - int(20 * FONT_SCALE), rect.width() - 60, int(16 * FONT_SCALE)),
@@ -492,7 +559,8 @@ class MainWindow(QMainWindow):
 
         # 提示行
         hint = QLabel(
-            "提示：长音频仅前约 4 秒参与本次判定（图中高亮区）。视频将自动分离音轨；结果仅供辅助参考。"
+            "提示：每次判定取约 4 秒窗口（图中高亮区，可鼠标拖动平移，松手自动重检）。"
+            "视频将自动分离音轨；结果仅供辅助参考。"
         )
         hint.setObjectName("Hint")
         outer.addWidget(hint)
@@ -527,6 +595,7 @@ class MainWindow(QMainWindow):
         wave_head.addWidget(self.wave_meta)
         wv.addLayout(wave_head)
         self.waveform = WaveformWidget()
+        self.waveform.window_moved.connect(self.on_window_moved)
         wv.addWidget(self.waveform, 1)
         lv.addWidget(wave_card, 1)
 
@@ -654,8 +723,10 @@ class MainWindow(QMainWindow):
 
         # 信号
         self.btn_open.clicked.connect(lambda: self.drop_zone._pick_file())
-        self.btn_detect.clicked.connect(self.start_detect)
+        self.btn_detect.clicked.connect(lambda: self.start_detect(self.waveform.win_start))
         self._current_path = None
+        self._audio_cache = None
+        self.worker = None
         self._vertical = False
 
     # ---- 自适应
@@ -683,6 +754,7 @@ class MainWindow(QMainWindow):
 
     def on_file_selected(self, path: str):
         self._current_path = path
+        self._audio_cache = None
         p = Path(path)
         self.file_card.setText(f"当前文件\n{p.name}")
         self.file_card.setToolTip(path)
@@ -702,18 +774,26 @@ class MainWindow(QMainWindow):
         self.time_v.setText("—")
         self.load_note.setText("")
 
-    def start_detect(self):
+    def start_detect(self, win_start: int = 0):
         if not self._current_path:
             return
         self.btn_detect.setEnabled(False)
         self.btn_open.setEnabled(False)
         self.progress.show()
         self.status_label.setText("启动中…")
-        self.worker = DetectWorker(self._current_path, self)
+        self.worker = DetectWorker(
+            self._current_path, self,
+            audio=self._audio_cache, win_start=win_start,
+        )
         self.worker.stage.connect(self.status_label.setText)
         self.worker.finished_ok.connect(self.on_result)
         self.worker.failed.connect(self.on_error)
         self.worker.start()
+
+    def on_window_moved(self, win_start: int):
+        if self._audio_cache is None or self.worker is not None and self.worker.isRunning():
+            return
+        self.start_detect(win_start)
 
     def on_result(self, r: dict):
         self.progress.hide()
@@ -721,10 +801,17 @@ class MainWindow(QMainWindow):
         self.btn_detect.setEnabled(True)
 
         audio = r["audio"]
+        self._audio_cache = audio
         self.waveform.set_audio(audio)
+        win_start = r.get("win_start", 0)
+        self.waveform.win_start = win_start
+        self.waveform._clamp_win()
+        self.waveform.update()
         dur = audio.shape[0] / SAMPLE_RATE
-        used = min(dur, MODEL_WINDOW_S)
-        self.wave_meta.setText(f"全长 {dur:.2f}s · 本次分析前 {used:.2f}s")
+        win_end = min(audio.shape[0], win_start + REQUIRED_SAMPLES)
+        self.wave_meta.setText(
+            f"全长 {dur:.2f}s · 本次分析 {win_start / SAMPLE_RATE:.2f}–{win_end / SAMPLE_RATE:.2f}s"
+        )
         self.status_label.setText("完成")
 
         media = r["media"]
