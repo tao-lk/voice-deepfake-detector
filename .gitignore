@@ -17,10 +17,11 @@ build_app.spec
 浠嬬粛.txt
 浣跨敤璇存槑.txt
 
-# 璇勪及杩愯浜х墿
+# 璇勪及鑴氭湰涓庤繍琛屼骇鐗╋紙浠呮湰鍦颁繚鐣欙級
+eval_dataset.py
 *.log
 *.npz
 eval_*.txt
 
-# 模型附属文件
+# 模锟酵革拷锟斤拷锟侥硷拷
 models/spectra-aasist3-int8-audio-deepfake/*

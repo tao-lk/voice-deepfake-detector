@@ -17,7 +17,6 @@
 ```
 .
 ├── app.py               # 主程序：UI + ffmpeg 解码 + ONNX 推理
-├── eval_dataset.py      # 数据集批量评估：EER/AUC/多准则阈值扫描/分攻击类型统计
 ├── selfcheck.py         # offscreen UI 自检
 ├── requirements.txt     # 依赖包列表
 ├── bin/                 # ffmpeg.exe / ffprobe.exe（自行放置，gitignore）
@@ -73,19 +72,9 @@ python app.py          # 启动界面
 python selfcheck.py    # offscreen UI 自检
 ```
 
-## 评估
+## 评估结果
 
-> 评估脚本另需 `soundfile` `loguru` `tqdm`。
-
-`eval_dataset.py` 支持任意「真实子目录 + 多个伪造子目录」布局，输出总体指标、四准则最优阈值（EER 工作点 / 最高 Acc / 最高 F1 / 最大 Youden J）、UI 阈值下分攻击类型统计，并导出概率 `*_scores.npz`。
-
-```powershell
-# 自建数据集: dataset/{fake,real}/*.wav
-python eval_dataset.py --dataset <路径>
-
-# ASVspoof2019 子集: ys=原声, hc/hh/zh=变声伪造
-python eval_dataset.py --dataset <路径> --real-dir ys --spoof-dirs hc,hh,zh --out-prefix eval_asv2019
-```
+以下指标由离线批量评估得到（评估脚本不随仓库分发）：
 
 ### 实测结果
 
