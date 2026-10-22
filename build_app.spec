@@ -44,7 +44,11 @@ a = Analysis(
         (r"bin\ffmpeg.exe", "bin"),
         (r"bin\ffprobe.exe", "bin"),
     ],
-    hiddenimports=["onnxruntime", "onnxruntime.capi", "onnxruntime.capi.onnxruntime_pybind11_state"],
+    hiddenimports=[
+        "onnxruntime", "onnxruntime.capi", "onnxruntime.capi.onnxruntime_pybind11_state",
+        # numpy.random.bit_generator (Cython) 动态导入 secrets, 静态分析漏收
+        "secrets",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
