@@ -111,14 +111,24 @@ def best_threshold(scores: np.ndarray, labels: np.ndarray):
     return out
 
 
-def collect_files(dataset_dir: Path):
+def collect_files(dataset_dir: Path, real_dir: str = "real", spoof_dirs: str = "fake"):
+    """收集样本。real_dir 为真实音频子目录，spoof_dirs 为伪造子目录（逗号分隔）。
+
+    返回 items: (path, label, group)，group 为子目录名，用于分攻击类型统计。
+    """
     items = []
-    for label, sub in ((0, "fake"), (1, "real")):
+    real_path = dataset_dir / real_dir
+    if not real_path.is_dir():
+        raise FileNotFoundError(real_path)
+    for p in sorted(real_path.glob("*.wav")):
+        items.append((p, 1, real_dir))
+    for sub in spoof_dirs.split(","):
+        sub = sub.strip()
         d = dataset_dir / sub
         if not d.is_dir():
             raise FileNotFoundError(d)
         for p in sorted(d.glob("*.wav")):
-            items.append((p, label))
+            items.append((p, 0, sub))
     return items
 
 
@@ -130,21 +140,28 @@ def main():
     )
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--limit", type=int, default=0, help="每类最多取 N 条，0=全量")
+    parser.add_argument("--real-dir", default="real", help="真实音频子目录名")
+    parser.add_argument("--spoof-dirs", default="fake", help="伪造音频子目录名，逗号分隔")
+    parser.add_argument("--out-prefix", default="eval", help="输出文件前缀")
     args = parser.parse_args()
 
-    logger.add("eval_train.log", rotation="10 MB", encoding="utf-8")
+    logger.add(f"{args.out_prefix}_scores.log", rotation="10 MB", encoding="utf-8")
     logger.info("加载模型: {}", A.MODEL_PATH.name)
     sess, load_ms = A.get_session()
     logger.info("模型加载完成 {:.1f} ms", load_ms)
 
-    items = collect_files(Path(args.dataset))
+    items = collect_files(Path(args.dataset), args.real_dir, args.spoof_dirs)
     if args.limit > 0:
-        fake = [x for x in items if x[1] == 0][: args.limit]
-        real = [x for x in items if x[1] == 1][: args.limit]
-        items = fake + real
-    logger.info("数据集: {} 条 (fake+real), batch={}", len(items), args.batch)
+        kept, per_group = [], {}
+        for it in items:
+            g = it[2]
+            if per_group.get(g, 0) < args.limit:
+                kept.append(it)
+                per_group[g] = per_group.get(g, 0) + 1
+        items = kept
+    logger.info("数据集: {} 条 (real={} + spoof={}), batch={}", len(items), args.real_dir, args.spoof_dirs, args.batch)
 
-    scores, labels = [], []
+    scores, labels, groups = [], [], []
     errors = 0
     t_start = time.perf_counter()
 
@@ -152,11 +169,13 @@ def main():
         chunk = items[i : i + args.batch]
         batch_x = []
         batch_y = []
-        for path, label in chunk:
+        batch_g = []
+        for path, label, group in chunk:
             try:
                 audio = load_audio_16k(path)
                 batch_x.append(A.make_model_input(audio))
                 batch_y.append(label)
+                batch_g.append(group)
             except Exception as exc:
                 errors += 1
                 logger.warning("跳过 {}: {}", path.name, exc)
@@ -167,34 +186,41 @@ def main():
         probs = A.softmax_batch(logits.astype(np.float64))
         scores.extend(probs[:, 1].tolist())
         labels.extend(batch_y)
+        groups.extend(batch_g)
 
     elapsed = time.perf_counter() - t_start
     scores = np.array(scores)
     labels = np.array(labels, dtype=np.int64)
+    groups = np.array(groups)
+
+    def metrics_at(scores, labels, thr):
+        pred = scores >= thr
+        tp = int((pred & (labels == 1)).sum())
+        tn = int((~pred & (labels == 0)).sum())
+        fp = int((pred & (labels == 0)).sum())
+        fn = int((~pred & (labels == 1)).sum())
+        acc = (tp + tn) / max(labels.shape[0], 1)
+        prec = tp / max(tp + fp, 1)
+        rec = tp / max(tp + fn, 1)
+        f1 = 2 * prec * rec / max(prec + rec, 1e-9)
+        return tp, tn, fp, fn, acc, prec, rec, f1
 
     n_real = int(labels.sum())
     n_fake = int(labels.shape[0] - n_real)
-    pred = (scores >= 0.5).astype(np.int64)
-    tp = int(((pred == 1) & (labels == 1)).sum())
-    tn = int(((pred == 0) & (labels == 0)).sum())
-    fp = int(((pred == 1) & (labels == 0)).sum())
-    fn = int(((pred == 0) & (labels == 1)).sum())
-    acc = (tp + tn) / labels.shape[0]
-    precision = tp / max(tp + fp, 1)
-    recall = tp / max(tp + fn, 1)
-    f1 = 2 * precision * recall / max(precision + recall, 1e-9)
+    tp, tn, fp, fn, acc, precision, recall, f1 = metrics_at(scores, labels, 0.5)
     eer = compute_eer(scores, labels)
     auc = compute_auc(scores, labels)
+    cm05 = (tp, tn, fp, fn)
 
-    logger.info("==== 评估结果 ====")
+    logger.info("==== 评估结果 @0.5 ====")
     logger.info("样本: {} (real={}, fake={}), 失败 {}", labels.shape[0], n_real, n_fake, errors)
     logger.info("Accuracy : {:.2f}%  (TP={} TN={} FP={} FN={})", acc * 100, tp, tn, fp, fn)
     logger.info("Precision: {:.2f}%   Recall: {:.2f}%   F1: {:.4f}", precision * 100, recall * 100, f1)
     logger.info("EER      : {:.2f}%", eer * 100)
     logger.info("AUC      : {:.4f}", auc)
 
-    out_npz = Path("eval_scores.npz")
-    np.savez(out_npz, scores=scores, labels=labels)
+    out_npz = Path(f"{args.out_prefix}_scores.npz")
+    np.savez(out_npz, scores=scores, labels=labels, groups=groups)
     logger.info("概率已保存: {}", out_npz.resolve())
 
     bests = best_threshold(scores, labels)
@@ -202,29 +228,67 @@ def main():
     for name, key in (("EER工作点", "eer"), ("最高准确率", "acc"), ("最高F1", "f1"), ("最大Youden J", "youden")):
         t, a, f, fpr, fnr = bests[key]
         logger.info(
-            "{:<10} threshold={:.4f}  Acc={:.2f}%  F1={:.4f}  FPR={:.2f}%  FNR={:.2f}%",
+            "{:<10} threshold={:.10f}  Acc={:.2f}%  F1={:.4f}  FPR={:.2f}%  FNR={:.2f}%",
             name, t, a * 100, f, fpr * 100, fnr * 100,
         )
+
+    t_ui = A.THRESHOLD_BONA
+    tp, tn, fp, fn, acc_ui, _, _, f1_ui = metrics_at(scores, labels, t_ui)
+    logger.info("==== UI 阈值 {:.10f} ====", t_ui)
+    logger.info("Accuracy : {:.2f}%  F1: {:.4f}  (TP={} TN={} FP={} FN={})", acc_ui * 100, f1_ui, tp, tn, fp, fn)
+
+    logger.info("==== 分攻击类型 @UI阈值 ====")
+    for g in sorted(set(groups.tolist())):
+        mask = groups == g
+        g_scores, g_labels = scores[mask], labels[mask]
+        tp, tn, fp, fn, g_acc, _, _, _ = metrics_at(g_scores, g_labels, t_ui)
+        if g_labels.min() == g_labels.max():
+            # 单类别子集: F1/EER/AUC 无定义, 只报 Acc 与错误数
+            role = "真实" if g_labels[0] == 1 else "伪造"
+            logger.info("{:<6} n={:<5} {} Acc={:.2f}%  误判数={}", g, int(mask.sum()), role, g_acc * 100, fp + fn)
+        else:
+            g_eer = compute_eer(g_scores, g_labels)
+            g_auc = compute_auc(g_scores, g_labels)
+            logger.info(
+                "{:<6} n={:<5} Acc={:.2f}%  EER={:.2f}%  AUC={:.4f}  FP={} FN={}",
+                g, int(mask.sum()), g_acc * 100, g_eer * 100, g_auc, fp, fn,
+            )
     logger.info("平均耗时 : {:.0f} ms/条 (含IO, batch={})", elapsed / labels.shape[0] * 1000, args.batch)
 
     print()
-    print("=" * 46)
-    print(f"  样本数     : {labels.shape[0]}  (real={n_real}, fake={n_fake})")
+    print("=" * 52)
+    print(f"  样本数     : {labels.shape[0]}  (real={n_real}, spoof={n_fake})")
+    print(f"  --- 阈值 0.5 ---")
     print(f"  Accuracy   : {acc * 100:6.2f} %")
     print(f"  Precision  : {precision * 100:6.2f} %")
     print(f"  Recall     : {recall * 100:6.2f} %")
     print(f"  F1         : {f1:6.4f}")
     print(f"  EER        : {eer * 100:6.2f} %")
     print(f"  AUC        : {auc:6.4f}")
-    print(f"  混淆矩阵   : TP={tp} TN={tn} FP={fp} FN={fn}")
+    print(f"  混淆矩阵   : TP={cm05[0]} TN={cm05[1]} FP={cm05[2]} FN={cm05[3]}")
     print(f"  总耗时     : {elapsed:.1f} s")
-    print("-" * 46)
+    print("-" * 52)
     print("  最优阈值扫描 (基于 P(real)=p_bona):")
     for name, key in (("EER工作点", "eer"), ("最高准确率", "acc"), ("最高F1", "f1"), ("最大Youden J", "youden")):
         t, a, f, fpr, fnr = bests[key]
-        print(f"  {name:<8}: threshold={t:.4f}  Acc={a * 100:6.2f}%  F1={f:.4f}  FPR={fpr * 100:5.2f}%  FNR={fnr * 100:5.2f}%")
+        print(f"  {name:<8}: threshold={t:.10f}  Acc={a * 100:6.2f}%  F1={f:.4f}  FPR={fpr * 100:5.2f}%  FNR={fnr * 100:5.2f}%")
+    tp, tn, fp, fn, acc_ui, prec_ui, rec_ui, f1_ui = metrics_at(scores, labels, t_ui)
+    print(f"  --- UI 阈值 {t_ui:.10f} ---")
+    print(f"  Accuracy   : {acc_ui * 100:6.2f} %   F1={f1_ui:.4f}   FP={fp} FN={fn}")
+    print("  分攻击类型 @UI阈值:")
+    for g in sorted(set(groups.tolist())):
+        mask = groups == g
+        g_scores, g_labels = scores[mask], labels[mask]
+        tp, tn, fp, fn, g_acc, _, _, _ = metrics_at(g_scores, g_labels, t_ui)
+        if g_labels.min() == g_labels.max():
+            role = "real" if g_labels[0] == 1 else "spoof"
+            print(f"    {g:<6} n={mask.sum():<5} {role:<5} Acc={g_acc * 100:6.2f}%  误判={fp + fn}")
+        else:
+            g_eer = compute_eer(g_scores, g_labels)
+            g_auc = compute_auc(g_scores, g_labels)
+            print(f"    {g:<6} n={mask.sum():<5} Acc={g_acc * 100:6.2f}%  EER={g_eer * 100:5.2f}%  AUC={g_auc:.4f}  FP={fp} FN={fn}")
     print(f"  概率已保存 : {out_npz.resolve()}")
-    print("=" * 46)
+    print("=" * 52)
 
 
 if __name__ == "__main__":
