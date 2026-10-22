@@ -21,3 +21,6 @@ build_app.spec
 *.log
 *.npz
 eval_*.txt
+
+# 模型附属文件
+models/spectra-aasist3-int8-audio-deepfake/*
