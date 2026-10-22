@@ -269,23 +269,43 @@ class DetectWorker(QThread):
 # ---------------------------------------------------------------- 波形控件
 
 class WaveformWidget(QWidget):
+    """波形视口 + 定长截取窗口。
+
+    视口固定显示约 VIEW_WINDOWS 个窗口宽度的波形; 截取窗口时长恒为
+    REQUIRED_SAMPLES, 两侧虚线边界, 鼠标悬停显示抓手, 拖动选择送检
+    片段; 拖至视口边缘时视口自动滚动以显示后续波形。
+    """
+
     window_moved = pyqtSignal(int)
+    VIEW_WINDOWS = 3
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.audio = None
-        self.peaks_min = None
-        self.peaks_max = None
+        self.peak = 1e-6
         self.win_start = 0
+        self.view_start = 0
         self._dragging = False
+        self._drag_offset = 0
+        self._press_win = 0
         self.setMinimumHeight(int(150 * FONT_SCALE))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setCursor(Qt.OpenHandCursor)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.ArrowCursor)
 
     def set_audio(self, audio: np.ndarray):
         self.audio = audio
         self.win_start = 0
-        self._compute_peaks()
+        self.view_start = 0
+        if audio is not None and audio.size:
+            self.peak = float(max(np.abs(audio).max(), 1e-6))
+        else:
+            self.peak = 1e-6
+        self.update()
+
+    def set_window(self, win_start: int):
+        self.win_start = win_start
+        self._ensure_visible()
         self.update()
 
     def _win_len(self) -> int:
@@ -293,12 +313,32 @@ class WaveformWidget(QWidget):
             return 0
         return min(self.audio.shape[0], REQUIRED_SAMPLES)
 
-    def _clamp_win(self):
+    def _view_span(self) -> int:
         if self.audio is None:
-            self.win_start = 0
+            return 0
+        return min(self.audio.shape[0], REQUIRED_SAMPLES * self.VIEW_WINDOWS)
+
+    def _clamp(self):
+        if self.audio is None:
+            self.win_start = self.view_start = 0
             return
-        max_start = max(0, self.audio.shape[0] - self._win_len())
-        self.win_start = min(max(self.win_start, 0), max_start)
+        total = self.audio.shape[0]
+        self.win_start = min(max(self.win_start, 0), max(0, total - self._win_len()))
+        span = self._view_span()
+        self.view_start = min(max(self.view_start, 0), max(0, total - span))
+
+    def _ensure_visible(self):
+        """滚动视口使截取窗口完整可见, 保留约 12% 上下文边距。"""
+        if self.audio is None:
+            return
+        span = self._view_span()
+        win_len = self._win_len()
+        margin = max(1, int(span * 0.12))
+        if self.win_start + win_len + margin > self.view_start + span:
+            self.view_start = self.win_start + win_len - span + margin
+        if self.win_start - margin < self.view_start:
+            self.view_start = self.win_start - margin
+        self._clamp()
 
     def _plot_rect(self):
         pad_l, pad_r, pad_t, pad_b = 14, 14, int(26 * FONT_SCALE), int(24 * FONT_SCALE)
@@ -306,49 +346,56 @@ class WaveformWidget(QWidget):
 
     def _x_to_sample(self, x: float) -> int:
         rect = self._plot_rect()
+        span = max(self._view_span(), 1)
         frac = (x - rect.left()) / max(rect.width(), 1.0)
         frac = min(max(frac, 0.0), 1.0)
-        return int(frac * self.audio.shape[0])
+        return int(self.view_start + frac * span)
+
+    def _sample_to_x(self, s: float) -> float:
+        rect = self._plot_rect()
+        span = max(self._view_span(), 1)
+        return rect.left() + rect.width() * (s - self.view_start) / span
+
+    def _in_window(self, x: float) -> bool:
+        x0 = self._sample_to_x(self.win_start)
+        x1 = self._sample_to_x(self.win_start + self._win_len())
+        return x0 <= x <= x1
+
+    def mouseMoveEvent(self, event):
+        if self.audio is None:
+            return
+        if self._dragging:
+            sample = self._x_to_sample(event.x())
+            self.win_start = sample - self._drag_offset
+            self._ensure_visible()
+            self.update()
+        else:
+            cur = Qt.OpenHandCursor if self._in_window(event.x()) else Qt.ArrowCursor
+            if self.cursor().shape() != cur:
+                self.setCursor(cur)
 
     def mousePressEvent(self, event):
         if self.audio is None or event.button() != Qt.LeftButton:
             return
-        self._dragging = True
-        self.setCursor(Qt.ClosedHandCursor)
         sample = self._x_to_sample(event.x())
         win_len = self._win_len()
-        # 点在窗口外: 窗口跳到以点击处为中心; 点在窗口内: 进入拖拽
-        if not (self.win_start <= sample <= self.win_start + win_len):
+        if not self._in_window(event.x()):
             self.win_start = sample - win_len // 2
-            self._clamp_win()
-            self.update()
-
-    def mouseMoveEvent(self, event):
-        if not self._dragging or self.audio is None:
-            return
-        rect = self._plot_rect()
-        frac = (event.x() - rect.left()) / max(rect.width(), 1.0)
-        frac = min(max(frac, 0.0), 1.0)
-        self.win_start = int(frac * self.audio.shape[0]) - self._win_len() // 2
-        self._clamp_win()
+            self._ensure_visible()
+        self._drag_offset = sample - self.win_start
+        self._press_win = self.win_start
+        self._dragging = True
+        self.setCursor(Qt.ClosedHandCursor)
         self.update()
 
     def mouseReleaseEvent(self, event):
         if self._dragging and event.button() == Qt.LeftButton:
             self._dragging = False
-            self.setCursor(Qt.OpenHandCursor)
-            self.window_moved.emit(self.win_start)
-
-    def _compute_peaks(self, n: int = 1600):
-        x = self.audio
-        if x is None or x.size == 0:
-            self.peaks_min = self.peaks_max = None
-            return
-        chunk = max(1, x.shape[0] // n)
-        usable = x.shape[0] // chunk * chunk
-        m = x[:usable].reshape(-1, chunk)
-        self.peaks_min = m.min(axis=1)
-        self.peaks_max = m.max(axis=1)
+            self.setCursor(
+                Qt.OpenHandCursor if self._in_window(event.x()) else Qt.ArrowCursor
+            )
+            if self.win_start != self._press_win:
+                self.window_moved.emit(self.win_start)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -374,28 +421,38 @@ class WaveformWidget(QWidget):
         win_len = self._win_len()
         win_start = self.win_start
         win_end = win_start + win_len
-        frac_a = win_start / total
-        frac_b = win_end / total
+        span = self._view_span()
+        view_end = min(total, self.view_start + span)
 
-        # 分析窗口高亮
-        hl_x = rect.left() + rect.width() * frac_a
-        hl_w = rect.width() * (frac_b - frac_a)
-        hl = QColor(C_AMBER)
-        hl.setAlpha(28)
-        p.fillRect(QRectF(hl_x, rect.top() - 6, hl_w, rect.height() + 12), hl)
-        p.setPen(QPen(QColor(C_AMBER), 1, Qt.DashLine))
-        p.drawLine(QPointF(hl_x, rect.top() - 6), QPointF(hl_x, rect.bottom() + 6))
-        p.drawLine(QPointF(hl_x + hl_w, rect.top() - 6), QPointF(hl_x + hl_w, rect.bottom() + 6))
+        # 视口内的包络
+        seg = self.audio[self.view_start:view_end]
+        n_buckets = max(64, min(1600, int(rect.width())))
+        chunk = max(1, seg.shape[0] // n_buckets)
+        usable = seg.shape[0] // chunk * chunk
+        m = seg[:usable].reshape(-1, chunk)
+        pmin = m.min(axis=1)
+        pmax = m.max(axis=1)
+        n = pmin.shape[0]
+
+        half = rect.height() / 2 - 2
 
         # 中线
         p.setPen(QPen(QColor(C_BORDER), 1))
         p.drawLine(QPointF(rect.left(), mid_y), QPointF(rect.right(), mid_y))
 
-        # 包络
-        n = self.peaks_min.shape[0]
-        peak = float(max(np.abs(self.peaks_max).max(), np.abs(self.peaks_min).max(), 1e-6))
-        half = rect.height() / 2 - 2
+        # 截取窗口高亮 (两侧虚线)
+        x0 = max(self._sample_to_x(win_start), rect.left())
+        x1 = min(self._sample_to_x(win_end), rect.right())
+        if x1 > x0:
+            hl = QColor(C_AMBER)
+            hl.setAlpha(28)
+            p.fillRect(QRectF(x0, rect.top() - 6, x1 - x0, rect.height() + 12), hl)
+        p.setPen(QPen(QColor(C_AMBER), 1.4, Qt.DashLine))
+        for xs in (self._sample_to_x(win_start), self._sample_to_x(win_end)):
+            if rect.left() <= xs <= rect.right():
+                p.drawLine(QPointF(xs, rect.top() - 6), QPointF(xs, rect.bottom() + 6))
 
+        # 包络
         grad = QLinearGradient(0, rect.top(), 0, rect.bottom())
         grad.setColorAt(0.0, QColor(C_AMBER_HI))
         grad.setColorAt(0.5, QColor(C_AMBER))
@@ -405,11 +462,11 @@ class WaveformWidget(QWidget):
         path.moveTo(rect.left(), mid_y)
         for i in range(n):
             x = rect.left() + rect.width() * i / max(n - 1, 1)
-            y = mid_y - (self.peaks_max[i] / peak) * half
+            y = mid_y - (pmax[i] / self.peak) * half
             path.lineTo(x, y)
         for i in range(n - 1, -1, -1):
             x = rect.left() + rect.width() * i / max(n - 1, 1)
-            y = mid_y - (self.peaks_min[i] / peak) * half
+            y = mid_y - (pmin[i] / self.peak) * half
             path.lineTo(x, y)
         path.closeSubpath()
         p.fillPath(path, QBrush(grad))
@@ -423,13 +480,22 @@ class WaveformWidget(QWidget):
         p.setFont(QFont("Microsoft YaHei UI", int(8 * FONT_SCALE)))
         p.setPen(QPen(QColor(C_AMBER)))
         p.drawText(QPointF(rect.left() + 6, rect.top() - int(8 * FONT_SCALE)),
-                   f"分析窗口 {win_start / SAMPLE_RATE:.2f}–{win_end / SAMPLE_RATE:.2f}s · 拖动可平移")
+                   f"截取窗口 {win_start / SAMPLE_RATE:.2f}–{win_end / SAMPLE_RATE:.2f}s · 拖动选择片段")
         dur = total / SAMPLE_RATE
         p.setPen(QPen(QColor(C_DIM)))
-        p.drawText(QRectF(rect.left(), h - int(20 * FONT_SCALE), rect.width() - 60, int(16 * FONT_SCALE)),
-                   Qt.AlignRight, f"{dur:.2f} s")
+        if total > span:
+            view_label = f"视图 {self.view_start / SAMPLE_RATE:.1f}–{view_end / SAMPLE_RATE:.1f}s / 全长 {dur:.1f}s"
+        else:
+            view_label = f"全长 {dur:.2f} s"
+        p.drawText(QRectF(rect.left(), h - int(20 * FONT_SCALE), rect.width() - int(6 * FONT_SCALE), int(16 * FONT_SCALE)),
+                   Qt.AlignRight, view_label)
         p.drawText(QPointF(rect.left() + 6, h - int(8 * FONT_SCALE)), "16 kHz · mono · PCM")
         p.end()
+
+    def leaveEvent(self, event):
+        if not self._dragging:
+            self.setCursor(Qt.ArrowCursor)
+        super().leaveEvent(event)
 
 
 # ---------------------------------------------------------------- 拖放区
@@ -559,7 +625,7 @@ class MainWindow(QMainWindow):
 
         # 提示行
         hint = QLabel(
-            "提示：每次判定取约 4 秒窗口（图中高亮区，可鼠标拖动平移，松手自动重检）。"
+            "提示：每次判定取约 4 秒截取窗口（图中虚线框，悬停拖动选择片段，拖至边缘视口自动滚动，松手自动重检）。"
             "视频将自动分离音轨；结果仅供辅助参考。"
         )
         hint.setObjectName("Hint")
@@ -802,11 +868,10 @@ class MainWindow(QMainWindow):
 
         audio = r["audio"]
         self._audio_cache = audio
-        self.waveform.set_audio(audio)
-        win_start = r.get("win_start", 0)
-        self.waveform.win_start = win_start
-        self.waveform._clamp_win()
-        self.waveform.update()
+        if audio is not self.waveform.audio:
+            self.waveform.set_audio(audio)
+        self.waveform.set_window(r.get("win_start", 0))
+        win_start = self.waveform.win_start
         dur = audio.shape[0] / SAMPLE_RATE
         win_end = min(audio.shape[0], win_start + REQUIRED_SAMPLES)
         self.wave_meta.setText(
