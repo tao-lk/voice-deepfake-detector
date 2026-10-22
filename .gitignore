@@ -4,3 +4,7 @@ bin/*.exe
 models/**/*.onnx
 .cache/
 *.raw
+build/
+dist/
+*.log
+eval_*_scores.npz

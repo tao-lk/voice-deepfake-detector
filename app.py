@@ -28,7 +28,10 @@ from PyQt5.QtWidgets import (
 
 # ---------------------------------------------------------------- 路径与常量
 
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "models" / "spectra-aasist3-int8-audio-deepfake" / "spectra-aasist3-int8-dynamic.onnx"
 FFMPEG = BASE_DIR / "bin" / "ffmpeg.exe"
 FFPROBE = BASE_DIR / "bin" / "ffprobe.exe"
