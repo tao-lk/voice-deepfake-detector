@@ -29,3 +29,23 @@
 2026-10-22 19:44:49.552 | INFO     | __main__:main:152 - EER      : 1.00%
 2026-10-22 19:44:49.552 | INFO     | __main__:main:153 - AUC      : 0.9985
 2026-10-22 19:44:49.552 | INFO     | __main__:main:154 - 平均耗时 : 739 ms/条 (含IO, batch=16)
+2026-10-22 20:04:28.590 | INFO     | __main__:main:136 - 加载模型: spectra-aasist3-int8-dynamic.onnx
+2026-10-22 20:04:33.692 | INFO     | __main__:main:138 - 模型加载完成 5072.2 ms
+2026-10-22 20:04:33.699 | INFO     | __main__:main:145 - 数据集: 2000 条 (fake+real), batch=16
+2026-10-22 20:15:01.579 | INFO     | __main__:main:136 - 加载模型: spectra-aasist3-int8-dynamic.onnx
+2026-10-22 20:15:07.557 | INFO     | __main__:main:138 - 模型加载完成 5948.9 ms
+2026-10-22 20:15:07.564 | INFO     | __main__:main:145 - 数据集: 2000 条 (fake+real), batch=16
+2026-10-22 20:28:36.776 | WARNING  | __main__:main:162 - 跳过 00034.wav: index 0 is out of bounds for axis 0 with size 0
+2026-10-22 20:40:52.887 | INFO     | __main__:main:189 - ==== 评估结果 ====
+2026-10-22 20:40:52.887 | INFO     | __main__:main:190 - 样本: 1999 (real=999, fake=1000), 失败 1
+2026-10-22 20:40:52.887 | INFO     | __main__:main:191 - Accuracy : 86.14%  (TP=997 TN=725 FP=275 FN=2)
+2026-10-22 20:40:52.888 | INFO     | __main__:main:192 - Precision: 78.38%   Recall: 99.80%   F1: 0.8780
+2026-10-22 20:40:52.888 | INFO     | __main__:main:193 - EER      : 1.00%
+2026-10-22 20:40:52.888 | INFO     | __main__:main:194 - AUC      : 0.9985
+2026-10-22 20:40:52.889 | INFO     | __main__:main:198 - 概率已保存: F:\语音深度伪造检测\eval_scores.npz
+2026-10-22 20:40:52.937 | INFO     | __main__:main:201 - ==== 最优阈值扫描 ====
+2026-10-22 20:40:52.937 | INFO     | __main__:main:204 - EER工作点     threshold=1.0000  Acc=99.00%  F1=0.9900  FPR=1.00%  FNR=1.00%
+2026-10-22 20:40:52.937 | INFO     | __main__:main:204 - 最高准确率      threshold=1.0000  Acc=99.15%  F1=0.9914  FPR=0.20%  FNR=1.50%
+2026-10-22 20:40:52.938 | INFO     | __main__:main:204 - 最高F1       threshold=1.0000  Acc=99.15%  F1=0.9914  FPR=0.20%  FNR=1.50%
+2026-10-22 20:40:52.938 | INFO     | __main__:main:204 - 最大Youden J threshold=1.0000  Acc=99.15%  F1=0.9914  FPR=0.20%  FNR=1.50%
+2026-10-22 20:40:52.938 | INFO     | __main__:main:208 - 平均耗时 : 773 ms/条 (含IO, batch=16)

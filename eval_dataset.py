@@ -70,6 +70,47 @@ def compute_auc(scores: np.ndarray, labels: np.ndarray) -> float:
     return float((ranks[labels == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
 
 
+def best_threshold(scores: np.ndarray, labels: np.ndarray):
+    """扫描所有候选阈值，返回多个准则下的最优阈值及对应指标。
+
+    返回 dict: key -> (threshold, accuracy, f1, fpr, fnr)
+    准则: eer(FNR=FPR工作点), acc(最高准确率), f1(最高F1), youden(最大J=TPR-FPR)
+    """
+    n_pos = int(labels.sum())
+    n_neg = int(labels.shape[0] - n_pos)
+    cands = np.unique(scores)
+    rows = []
+    for t in cands:
+        pred = scores >= t
+        tp = int((pred & (labels == 1)).sum())
+        tn = int((~pred & (labels == 0)).sum())
+        fp = int((pred & (labels == 0)).sum())
+        fn = int((~pred & (labels == 1)).sum())
+        acc = (tp + tn) / labels.shape[0]
+        prec = tp / max(tp + fp, 1)
+        rec = tp / max(tp + fn, 1)
+        f1 = 2 * prec * rec / max(prec + rec, 1e-9)
+        fpr = fp / n_neg
+        fnr = fn / n_pos
+        rows.append((float(t), acc, f1, fpr, fnr))
+
+    arr = np.array(rows)
+    ts, accs, f1s, fprs, fnrs = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3], arr[:, 4]
+
+    def pack(idx):
+        i = int(idx)
+        return (float(ts[i]), float(accs[i]), float(f1s[i]), float(fprs[i]), float(fnrs[i]))
+
+    out = {
+        "acc": pack(np.argmax(accs)),
+        "f1": pack(np.argmax(f1s)),
+        "youden": pack(np.argmax((1 - fprs) - fnrs)),
+    }
+    # EER 工作点: |FNR - FPR| 最小处
+    out["eer"] = pack(np.argmin(np.abs(fnrs - fprs)))
+    return out
+
+
 def collect_files(dataset_dir: Path):
     items = []
     for label, sub in ((0, "fake"), (1, "real")):
@@ -151,6 +192,19 @@ def main():
     logger.info("Precision: {:.2f}%   Recall: {:.2f}%   F1: {:.4f}", precision * 100, recall * 100, f1)
     logger.info("EER      : {:.2f}%", eer * 100)
     logger.info("AUC      : {:.4f}", auc)
+
+    out_npz = Path("eval_scores.npz")
+    np.savez(out_npz, scores=scores, labels=labels)
+    logger.info("概率已保存: {}", out_npz.resolve())
+
+    bests = best_threshold(scores, labels)
+    logger.info("==== 最优阈值扫描 ====")
+    for name, key in (("EER工作点", "eer"), ("最高准确率", "acc"), ("最高F1", "f1"), ("最大Youden J", "youden")):
+        t, a, f, fpr, fnr = bests[key]
+        logger.info(
+            "{:<10} threshold={:.4f}  Acc={:.2f}%  F1={:.4f}  FPR={:.2f}%  FNR={:.2f}%",
+            name, t, a * 100, f, fpr * 100, fnr * 100,
+        )
     logger.info("平均耗时 : {:.0f} ms/条 (含IO, batch={})", elapsed / labels.shape[0] * 1000, args.batch)
 
     print()
@@ -164,6 +218,12 @@ def main():
     print(f"  AUC        : {auc:6.4f}")
     print(f"  混淆矩阵   : TP={tp} TN={tn} FP={fp} FN={fn}")
     print(f"  总耗时     : {elapsed:.1f} s")
+    print("-" * 46)
+    print("  最优阈值扫描 (基于 P(real)=p_bona):")
+    for name, key in (("EER工作点", "eer"), ("最高准确率", "acc"), ("最高F1", "f1"), ("最大Youden J", "youden")):
+        t, a, f, fpr, fnr = bests[key]
+        print(f"  {name:<8}: threshold={t:.4f}  Acc={a * 100:6.2f}%  F1={f:.4f}  FPR={fpr * 100:5.2f}%  FNR={fnr * 100:5.2f}%")
+    print(f"  概率已保存 : {out_npz.resolve()}")
     print("=" * 46)
 
 
