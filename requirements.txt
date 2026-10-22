@@ -1,9 +1,3 @@
-# 主程序 (app.py)
 PyQt5==5.15.9
 numpy==1.24.4
 onnxruntime==1.19.2
-
-# 评估脚本 (eval_dataset.py)
-soundfile==0.12.1
-loguru==0.7.2
-tqdm==4.66.4

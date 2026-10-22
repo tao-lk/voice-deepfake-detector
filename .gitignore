@@ -11,8 +11,13 @@ models/**/*.onnx
 build/
 dist/
 
+# 打包配置与随包文档（仅本地保留）
+build.ps1
+build_app.spec
+介绍.txt
+使用说明.txt
+
 # 评估运行产物
 *.log
 *.npz
-eval_*_stdout.txt
-eval_*_stderr.txt
+eval_*.txt

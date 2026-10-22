@@ -19,13 +19,11 @@
 ├── app.py               # 主程序：UI + ffmpeg 解码 + ONNX 推理
 ├── eval_dataset.py      # 数据集批量评估：EER/AUC/多准则阈值扫描/分攻击类型统计
 ├── selfcheck.py         # offscreen UI 自检
-├── build.ps1            # 一键打包：PyInstaller + 裁剪无用 DLL + 拷贝说明文档
-├── build_app.spec       # PyInstaller 配置：onedir、无控制台、内嵌模型与 ffmpeg
-├── 介绍.txt / 使用说明.txt  # 随包发布文档（UTF-8 BOM）
-├── bin/                 # ffmpeg.exe / ffprobe.exe（gitignore）
+├── requirements.txt     # 依赖包列表
+├── bin/                 # ffmpeg.exe / ffprobe.exe（自行放置，gitignore）
 └── models/
     └── spectra-aasist3-int8-audio-deepfake/
-        └── spectra-aasist3-int8-dynamic.onnx   # 347 MB（gitignore）
+        └── spectra-aasist3-int8-dynamic.onnx   # 347 MB（自行下载，gitignore）
 ```
 
 ## 模型契约
@@ -38,34 +36,46 @@
 | 预处理 | 预加重 0.97；长音频取截取窗口内 64600 样本，短音频循环平铺至满长 |
 | 推理 | ONNX Runtime CPU EP，INT8 动态量化模型，首测加载约 5 s 后缓存 |
 
-## 快速开始（开发环境）
+## 模型来源与下载
 
-依赖：Python 3.8+，`PyQt5` `numpy` `onnxruntime`（评估脚本另需 `soundfile` `loguru` `tqdm`）。ffmpeg/ffprobe 放入 `bin/`，模型放入 `models/` 对应子目录。
+模型：`Limitless-8/spectra-aasist3-int8-audio-deepfake`（HuggingFace，Apache-2.0，基于 `lab260/Spectra-AASIST3` 动态 INT8 量化，无重训练）。
+
+下载 `spectra-aasist3-int8-dynamic.onnx`（约 347 MB）后放入：
+
+```
+models/spectra-aasist3-int8-audio-deepfake/spectra-aasist3-int8-dynamic.onnx
+```
+
+- 模型页：https://huggingface.co/Limitless-8/spectra-aasist3-int8-audio-deepfake
+- 直链：https://huggingface.co/Limitless-8/spectra-aasist3-int8-audio-deepfake/resolve/main/spectra-aasist3-int8-dynamic.onnx
+- 基础模型：https://huggingface.co/lab260/Spectra-AASIST3
+
+## ffmpeg 自行放置
+
+本程序依赖 `ffmpeg` / `ffprobe` 提取音轨（视频文件必需，部分音频格式也需要）。二者不随仓库分发，请自行下载 Windows 构建并放入：
+
+```
+bin/ffmpeg.exe
+bin/ffprobe.exe
+```
+
+- 官方构建：https://www.gyan.dev/ffmpeg/builds/ （ffmpeg-release-essentials.zip）
+- 也可使用 BtbN 构建：https://github.com/BtbN/FFmpeg-Builds/releases （ffmpeg-master-latest-win64-gpl.zip）
+
+若 `bin/` 下不存在，程序会回退到系统 PATH 中的 `ffmpeg` / `ffprobe`。
+
+## 快速开始
 
 ```powershell
+pip install -r requirements.txt
+# 按上文放置模型与 ffmpeg 后：
 python app.py          # 启动界面
 python selfcheck.py    # offscreen UI 自检
 ```
 
-## 打包发布
-
-```powershell
-powershell -ExecutionPolicy Bypass -File build.ps1
-```
-
-产物 `dist\声鉴\`（约 662 MB，含模型与 ffmpeg）：
-
-- `声鉴.exe` — 无控制台窗口，双击运行
-- `_internal/` — Python 运行时、PyQt5、onnxruntime、模型、ffmpeg
-- `介绍.txt` / `使用说明.txt` — 自动随包拷贝
-
-打包要点（`build_app.spec`）：
-
-- `hiddenimports` 补 `secrets`（numpy.random Cython 动态导入，否则运行时报 `ModuleNotFoundError`）
-- `excludes` 排除 QtWebEngine/Quick 等未用重型模块
-- 打包后自动裁剪 `opengl32sw.dll`、`Qt5Quick/Qml`、`DirectML.dll` 等无用 DLL（省约 37 MB）
-
 ## 评估
+
+> 评估脚本另需 `soundfile` `loguru` `tqdm`。
 
 `eval_dataset.py` 支持任意「真实子目录 + 多个伪造子目录」布局，输出总体指标、四准则最优阈值（EER 工作点 / 最高 Acc / 最高 F1 / 最大 Youden J）、UI 阈值下分攻击类型统计，并导出概率 `*_scores.npz`。
 
@@ -98,8 +108,9 @@ python eval_dataset.py --dataset <路径> --real-dir ys --spoof-dirs hc,hh,zh --
 
 - 每次判定仅取截取窗口内约 4 秒内容，长音频拖动窗口分段复检
 - 首次检测加载模型需数秒，之后走缓存
-- 结果仅供辅助参考，详见 `使用说明.txt`
+- 结果仅供辅助参考，不作为唯一证据
 
 ## 许可与致谢
 
-模型：Spectra-AASIST3（INT8 量化版）；评估参考 ASVspoof 2019 LA 数据集子集。
+- 检测模型：`Limitless-8/spectra-aasist3-int8-audio-deepfake`（Apache-2.0），基于 `lab260/Spectra-AASIST3` 与 Meta `wav2vec2-xls-r-300m`
+- 评估参考 ASVspoof 2019 LA 数据集子集
