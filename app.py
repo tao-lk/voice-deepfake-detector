@@ -70,6 +70,9 @@ C_BONA = "#9cbf9a"
 C_SPOOF = "#d97761"
 C_WARN = "#c9b48a"
 
+# 字体统一缩放系数（所有界面字号 × 此值）
+FONT_SCALE = 2
+
 
 def recommend_duration(avail_mb: int):
     """依据当前可用内存估算安全的样例时长上限。"""
@@ -256,7 +259,7 @@ class WaveformWidget(QWidget):
         self.audio = None
         self.peaks_min = None
         self.peaks_max = None
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(int(150 * FONT_SCALE))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_audio(self, audio: np.ndarray):
@@ -281,7 +284,7 @@ class WaveformWidget(QWidget):
         w, h = self.width(), self.height()
         p.fillRect(0, 0, w, h, QColor(C_CARD2))
 
-        pad_l, pad_r, pad_t, pad_b = 14, 14, 26, 24
+        pad_l, pad_r, pad_t, pad_b = 14, 14, int(26 * FONT_SCALE), int(24 * FONT_SCALE)
         rect = QRectF(pad_l, pad_t, w - pad_l - pad_r, h - pad_t - pad_b)
         if rect.height() < 10:
             p.end()
@@ -291,7 +294,7 @@ class WaveformWidget(QWidget):
 
         if self.audio is None or self.audio.size == 0:
             p.setPen(QPen(QColor(C_FAINT)))
-            p.setFont(QFont("Microsoft YaHei UI", 10))
+            p.setFont(QFont("Microsoft YaHei UI", int(10 * FONT_SCALE)))
             p.drawText(self.rect(), Qt.AlignCenter, "尚未载入音频")
             p.end()
             return
@@ -342,15 +345,15 @@ class WaveformWidget(QWidget):
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 10, 10)
 
         # 标注
-        p.setFont(QFont("Microsoft YaHei UI", 8))
+        p.setFont(QFont("Microsoft YaHei UI", int(8 * FONT_SCALE)))
         p.setPen(QPen(QColor(C_AMBER)))
-        p.drawText(QPointF(rect.left() + 6, rect.top() - 8),
+        p.drawText(QPointF(rect.left() + 6, rect.top() - int(8 * FONT_SCALE)),
                    f"分析窗口 0–{MODEL_WINDOW_S:.2f}s")
         dur = total / SAMPLE_RATE
         p.setPen(QPen(QColor(C_DIM)))
-        p.drawText(QRectF(rect.left(), h - 20, rect.width() - 60, 16),
+        p.drawText(QRectF(rect.left(), h - int(20 * FONT_SCALE), rect.width() - 60, int(16 * FONT_SCALE)),
                    Qt.AlignRight, f"{dur:.2f} s")
-        p.drawText(QPointF(rect.left() + 6, h - 8), "16 kHz · mono · PCM")
+        p.drawText(QPointF(rect.left() + 6, h - int(8 * FONT_SCALE)), "16 kHz · mono · PCM")
         p.end()
 
 
@@ -362,7 +365,7 @@ class DropZone(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(92)
+        self.setMinimumHeight(int(92 * FONT_SCALE))
         self.setCursor(Qt.PointingHandCursor)
         self._hover = False
 
@@ -411,19 +414,23 @@ class DropZone(QWidget):
         p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 12, 12)
 
         # 小图标：三根声柱
-        cx, cy = 36, h / 2
+        cx, cy = int(36 * FONT_SCALE), h / 2
         p.setPen(Qt.NoPen)
         bar_brush = QBrush(QColor(C_AMBER if self._hover else C_WARN))
         p.setBrush(bar_brush)
         for dx, bh in ((-10, 12), (0, 22), (10, 16)):
-            p.drawRoundedRect(QRectF(cx + dx - 2.5, cy - bh / 2, 5, bh), 2, 2)
+            p.drawRoundedRect(
+                QRectF(cx + dx * FONT_SCALE - 2.5 * FONT_SCALE, cy - bh * FONT_SCALE / 2,
+                       5 * FONT_SCALE, bh * FONT_SCALE),
+                2 * FONT_SCALE, 2 * FONT_SCALE)
 
         p.setPen(QPen(QColor(C_TEXT)))
-        p.setFont(QFont("Microsoft YaHei UI", 11, QFont.DemiBold))
-        p.drawText(QPointF(64, cy - 4), "点击选择，或将音 / 视频文件拖入此处")
+        p.setFont(QFont("Microsoft YaHei UI", int(11 * FONT_SCALE), QFont.DemiBold))
+        p.drawText(QPointF(int(64 * FONT_SCALE), cy - int(4 * FONT_SCALE)),
+                   "点击选择，或将音 / 视频文件拖入此处")
         p.setPen(QPen(QColor(C_DIM)))
-        p.setFont(QFont("Microsoft YaHei UI", 8.5))
-        p.drawText(QPointF(64, cy + 16),
+        p.setFont(QFont("Microsoft YaHei UI", int(8.5 * FONT_SCALE)))
+        p.drawText(QPointF(int(64 * FONT_SCALE), cy + int(16 * FONT_SCALE)),
                    "WAV / MP3 / FLAC / M4A / AAC / OGG · MP4 / MKV / MOV / WEBM …")
         p.end()
 
@@ -434,7 +441,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("声鉴 · 语音深度伪造检测")
-        self.setMinimumSize(880, 620)
+        scr = QApplication.primaryScreen().availableGeometry()
+        self.setMinimumSize(
+            min(int(880 * FONT_SCALE), scr.width() - 40),
+            min(int(620 * FONT_SCALE), scr.height() - 40),
+        )
         self._build_ui()
         self._center_on_screen()
 
@@ -524,7 +535,7 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setObjectName("Busy")
         self.progress.setRange(0, 0)
-        self.progress.setFixedHeight(4)
+        self.progress.setFixedHeight(int(4 * FONT_SCALE))
         self.progress.setTextVisible(False)
         self.progress.hide()
         actions.addWidget(self.btn_open)
@@ -537,7 +548,7 @@ class MainWindow(QMainWindow):
         # 右：结果
         right = QFrame()
         right.setObjectName("Card")
-        right.setMinimumWidth(280)
+        right.setMinimumWidth(int(280 * FONT_SCALE))
         rv = QVBoxLayout(right)
         rv.setContentsMargins(18, 16, 18, 16)
         rv.setSpacing(12)
@@ -561,7 +572,7 @@ class MainWindow(QMainWindow):
         self.conf_bar.setRange(0, 1000)
         self.conf_bar.setValue(0)
         self.conf_bar.setTextVisible(False)
-        self.conf_bar.setFixedHeight(10)
+        self.conf_bar.setFixedHeight(int(10 * FONT_SCALE))
         rv.addWidget(self.conf_bar)
 
         grid = QGridLayout()
@@ -643,17 +654,17 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        vertical = event.size().width() < 1080
+        vertical = event.size().width() < 1600
         if vertical != self._vertical:
             self._vertical = vertical
             self.splitter.setOrientation(Qt.Vertical if vertical else Qt.Horizontal)
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen().availableGeometry()
-        w = int(screen.width() * 0.84)
-        h = int(screen.height() * 0.84)
-        w = min(max(w, 960), 1680)
-        h = min(max(h, 640), 1050)
+        w = min(int(screen.width() * 0.88), int(1680 * FONT_SCALE))
+        h = min(int(screen.height() * 0.88), int(1050 * FONT_SCALE))
+        w = min(max(w, 640), screen.width() - 20)
+        h = min(max(h, 480), screen.height() - 20)
         self.resize(w, h)
         self.move(
             screen.x() + (screen.width() - w) // 2,
@@ -763,14 +774,14 @@ QLabel {{
     background: transparent;
 }}
 QLabel#Title {{
-    font-size: 24px;
+    font-size: {24 * FONT_SCALE}px;
     font-weight: 700;
     letter-spacing: 6px;
     color: {C_TEXT};
     padding-left: 4px;
 }}
 QLabel#Subtitle {{
-    font-size: 10.5px;
+    font-size: {int(10.5 * FONT_SCALE)}px;
     color: {C_DIM};
     letter-spacing: 1px;
     padding-left: 6px;
@@ -778,10 +789,10 @@ QLabel#Subtitle {{
 QLabel#Chip {{
     background: {C_CARD2};
     border: 1px solid {C_BORDER};
-    border-radius: 9px;
+    border-radius: {9 * FONT_SCALE}px;
     color: {C_DIM};
-    font-size: 10px;
-    padding: 6px 12px;
+    font-size: {10 * FONT_SCALE}px;
+    padding: {6 * FONT_SCALE}px {12 * FONT_SCALE}px;
 }}
 QLabel#Chip[accent="1"] {{
     color: {C_AMBER};
@@ -789,36 +800,36 @@ QLabel#Chip[accent="1"] {{
 }}
 QLabel#Hint {{
     color: {C_WARN};
-    font-size: 10.5px;
-    padding: 2px 6px;
+    font-size: {int(10.5 * FONT_SCALE)}px;
+    padding: {2 * FONT_SCALE}px {6 * FONT_SCALE}px;
 }}
 QLabel#CardTitle {{
-    font-size: 11px;
+    font-size: {11 * FONT_SCALE}px;
     font-weight: 600;
     letter-spacing: 3px;
     color: {C_DIM};
 }}
-QLabel#Dim {{ color: {C_DIM}; font-size: 10.5px; }}
-QLabel#Faint {{ color: {C_FAINT}; font-size: 9.5px; }}
+QLabel#Dim {{ color: {C_DIM}; font-size: {int(10.5 * FONT_SCALE)}px; }}
+QLabel#Faint {{ color: {C_FAINT}; font-size: {int(9.5 * FONT_SCALE)}px; }}
 QLabel#Metric {{
-    font-size: 16px;
+    font-size: {16 * FONT_SCALE}px;
     font-weight: 600;
     font-family: "Cascadia Mono", "Consolas", monospace;
     color: {C_TEXT};
 }}
 QLabel#Verdict {{
-    font-size: 26px;
+    font-size: {26 * FONT_SCALE}px;
     font-weight: 700;
     letter-spacing: 4px;
-    padding: 14px 0 4px 0;
+    padding: {14 * FONT_SCALE}px 0 {4 * FONT_SCALE}px 0;
     color: {C_FAINT};
 }}
 QLabel#Verdict[tone="bona"] {{ color: {C_BONA}; }}
 QLabel#Verdict[tone="spoof"] {{ color: {C_SPOOF}; }}
 QLabel#Conf {{
-    font-size: 12px;
+    font-size: {12 * FONT_SCALE}px;
     color: {C_DIM};
-    padding-bottom: 4px;
+    padding-bottom: {4 * FONT_SCALE}px;
 }}
 QFrame#Sep {{
     border: none;
@@ -826,9 +837,9 @@ QFrame#Sep {{
     max-height: 1px;
 }}
 QPushButton {{
-    border-radius: 10px;
-    padding: 9px 22px;
-    font-size: 12px;
+    border-radius: {10 * FONT_SCALE}px;
+    padding: {9 * FONT_SCALE}px {22 * FONT_SCALE}px;
+    font-size: {12 * FONT_SCALE}px;
     font-weight: 600;
     letter-spacing: 2px;
     outline: none;
@@ -916,7 +927,7 @@ def main():
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setStyleSheet(QSS)
-    app.setFont(QFont("Microsoft YaHei UI", 10))
+    app.setFont(QFont("Microsoft YaHei UI", int(10 * FONT_SCALE)))
     app.setWindowIcon(make_icon())
     win = MainWindow()
     win.show()
