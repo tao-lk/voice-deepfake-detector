@@ -1,10 +1,18 @@
 __pycache__/
 *.pyc
-bin/*.exe
-models/**/*.onnx
 .cache/
 *.raw
+
+# 大型二进制与模型
+bin/*.exe
+models/**/*.onnx
+
+# 打包产物
 build/
 dist/
+
+# 评估运行产物
 *.log
-eval_*_scores.npz
+*.npz
+eval_*_stdout.txt
+eval_*_stderr.txt
