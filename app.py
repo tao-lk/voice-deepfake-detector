@@ -172,6 +172,12 @@ def softmax(z: np.ndarray) -> np.ndarray:
     return e / e.sum()
 
 
+def softmax_batch(z: np.ndarray) -> np.ndarray:
+    z = z - z.max(axis=-1, keepdims=True)
+    e = np.exp(z)
+    return e / e.sum(axis=-1, keepdims=True)
+
+
 # ---------------------------------------------------------------- 模型单例
 
 _SESSION = None

@@ -1,0 +1,31 @@
+2026-10-22 19:17:26.227 | INFO     | __main__:main:81 - 加载模型: spectra-aasist3-int8-dynamic.onnx
+2026-10-22 19:17:31.302 | INFO     | __main__:main:83 - 模型加载完成 5045.1 ms
+2026-10-22 19:17:31.310 | INFO     | __main__:main:90 - 数据集: 40 条 (fake+real), batch=8
+2026-10-22 19:17:58.467 | INFO     | __main__:main:134 - ==== 评估结果 ====
+2026-10-22 19:17:58.467 | INFO     | __main__:main:135 - 样本: 40 (real=20, fake=20), 失败 0
+2026-10-22 19:17:58.467 | INFO     | __main__:main:136 - Accuracy : 77.50%  (TP=20 TN=11 FP=9 FN=0)
+2026-10-22 19:17:58.468 | INFO     | __main__:main:137 - Precision: 68.97%   Recall: 100.00%   F1: 0.8163
+2026-10-22 19:17:58.468 | INFO     | __main__:main:138 - EER      : 100.00%
+2026-10-22 19:17:58.468 | INFO     | __main__:main:139 - AUC      : 1.0000
+2026-10-22 19:17:58.468 | INFO     | __main__:main:140 - 平均耗时 : 679 ms/条 (含IO, batch=8)
+2026-10-22 19:19:16.709 | INFO     | __main__:main:95 - 加载模型: spectra-aasist3-int8-dynamic.onnx
+2026-10-22 19:19:22.015 | INFO     | __main__:main:97 - 模型加载完成 5270.5 ms
+2026-10-22 19:19:22.022 | INFO     | __main__:main:104 - 数据集: 40 条 (fake+real), batch=8
+2026-10-22 19:19:49.450 | INFO     | __main__:main:148 - ==== 评估结果 ====
+2026-10-22 19:19:49.451 | INFO     | __main__:main:149 - 样本: 40 (real=20, fake=20), 失败 0
+2026-10-22 19:19:49.451 | INFO     | __main__:main:150 - Accuracy : 77.50%  (TP=20 TN=11 FP=9 FN=0)
+2026-10-22 19:19:49.451 | INFO     | __main__:main:151 - Precision: 68.97%   Recall: 100.00%   F1: 0.8163
+2026-10-22 19:19:49.451 | INFO     | __main__:main:152 - EER      : 0.00%
+2026-10-22 19:19:49.451 | INFO     | __main__:main:153 - AUC      : 1.0000
+2026-10-22 19:19:49.451 | INFO     | __main__:main:154 - 平均耗时 : 686 ms/条 (含IO, batch=8)
+2026-10-22 19:20:06.665 | INFO     | __main__:main:95 - 加载模型: spectra-aasist3-int8-dynamic.onnx
+2026-10-22 19:20:11.835 | INFO     | __main__:main:97 - 模型加载完成 5140.4 ms
+2026-10-22 19:20:11.843 | INFO     | __main__:main:104 - 数据集: 2000 条 (fake+real), batch=16
+2026-10-22 19:32:29.209 | WARNING  | __main__:main:121 - 跳过 00034.wav: index 0 is out of bounds for axis 0 with size 0
+2026-10-22 19:44:49.551 | INFO     | __main__:main:148 - ==== 评估结果 ====
+2026-10-22 19:44:49.551 | INFO     | __main__:main:149 - 样本: 1999 (real=999, fake=1000), 失败 1
+2026-10-22 19:44:49.551 | INFO     | __main__:main:150 - Accuracy : 86.14%  (TP=997 TN=725 FP=275 FN=2)
+2026-10-22 19:44:49.552 | INFO     | __main__:main:151 - Precision: 78.38%   Recall: 99.80%   F1: 0.8780
+2026-10-22 19:44:49.552 | INFO     | __main__:main:152 - EER      : 1.00%
+2026-10-22 19:44:49.552 | INFO     | __main__:main:153 - AUC      : 0.9985
+2026-10-22 19:44:49.552 | INFO     | __main__:main:154 - 平均耗时 : 739 ms/条 (含IO, batch=16)
