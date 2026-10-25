@@ -10,13 +10,20 @@ import os
 import subprocess
 import sys
 import time
+import tempfile
+import wave
 from pathlib import Path
 
 import numpy as np
 
+try:
+    import winsound
+except Exception:  # 非 Windows 平台降级; 桌面版仅面向 Windows 运行
+    winsound = None
+
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRectF, QPointF
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRectF, QPointF, QTimer, QObject
 from PyQt5.QtGui import (
     QColor, QFont, QPainter, QPen, QLinearGradient, QPainterPath, QBrush, QIcon, QPixmap
 )
@@ -44,6 +51,9 @@ SAMPLE_RATE = 16000
 REQUIRED_SAMPLES = 64600
 PREEMPH = 0.97
 MODEL_WINDOW_S = REQUIRED_SAMPLES / SAMPLE_RATE  # ≈ 4.0375 s
+
+# 试听预览时长: 与截取窗口等长 (≈4.04 s, 即"几秒")
+PLAY_SAMPLES = REQUIRED_SAMPLES
 
 # 判定阈值: 在 1999 条本地标注数据上扫描所得最优工作点
 # Acc 99.15%, F1 0.9914, FP=2, FN=15; 默认 0.5 时 Acc 仅 86.14%
@@ -190,6 +200,21 @@ def softmax_batch(z: np.ndarray) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
+def write_wav_segment(seg: np.ndarray, path: Path) -> bool:
+    """将 float32 PCM 片段写成 16-bit 单声道 WAV, 供 winsound 试听。"""
+    try:
+        s = np.clip(seg.astype(np.float32, copy=False), -1.0, 1.0)
+        pcm = (s * 32767.0).astype("<i2")
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(pcm.tobytes())
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------- 模型单例
 
 _SESSION = None
@@ -266,6 +291,71 @@ class DetectWorker(QThread):
             self.failed.emit(str(exc))
 
 
+# ---------------------------------------------------------------- 试听播放器
+
+class AudioPlayer(QObject):
+    """基于 winsound 的窗口片段试听; 异步播放, 支持中途停止。
+
+    - play(): 写入临时 WAV 并以异步方式播放截取窗口片段
+    - stop(): 立即中断播放
+    - started / finished: 供 UI 同步按钮状态
+    """
+
+    started = pyqtSignal()
+    finished = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._playing = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._on_timeout)
+        self._temp_path = Path(tempfile.gettempdir()) / "shengjian_preview.wav"
+
+    def is_playing(self):
+        return self._playing
+
+    def play(self, audio: np.ndarray, win_start: int, n_samples: int):
+        if winsound is None:
+            return
+        self._really_stop()
+        seg = audio[win_start:win_start + n_samples]
+        if seg.size == 0:
+            return
+        if not write_wav_segment(seg, self._temp_path):
+            return
+        try:
+            winsound.PlaySound(
+                str(self._temp_path),
+                winsound.SND_FILENAME | winsound.SND_ASYNC,
+            )
+        except Exception:
+            return
+        self._playing = True
+        self.started.emit()
+        dur_ms = int(seg.shape[0] / SAMPLE_RATE * 1000)
+        self._timer.start(dur_ms + 250)
+
+    def stop(self):
+        self._really_stop()
+
+    def _really_stop(self):
+        was = self._playing
+        if self._playing:
+            try:
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except Exception:
+                pass
+            self._playing = False
+        self._timer.stop()
+        if was:
+            self.finished.emit()
+
+    def _on_timeout(self):
+        self._playing = False
+        self.finished.emit()
+
+
 # ---------------------------------------------------------------- 波形控件
 
 class WaveformWidget(QWidget):
@@ -277,6 +367,7 @@ class WaveformWidget(QWidget):
     """
 
     window_moved = pyqtSignal(int)
+    window_drag_started = pyqtSignal()
     VIEW_WINDOWS = 3
 
     def __init__(self, parent=None):
@@ -377,6 +468,7 @@ class WaveformWidget(QWidget):
     def mousePressEvent(self, event):
         if self.audio is None or event.button() != Qt.LeftButton:
             return
+        self.window_drag_started.emit()  # 通知主窗口: 窗口即将变动, 中断当前试听
         sample = self._x_to_sample(event.x())
         win_len = self._win_len()
         if not self._in_window(event.x()):
@@ -626,6 +718,7 @@ class MainWindow(QMainWindow):
         # 提示行
         hint = QLabel(
             "提示：每次判定取约 4 秒截取窗口（图中虚线框，悬停拖动选择片段，拖至边缘视口自动滚动，松手自动重检）。"
+            "点『试听』可播放当前窗口音频，拖动窗口后自动试听新片段。"
             "视频将自动分离音轨；结果仅供辅助参考。"
         )
         hint.setObjectName("Hint")
@@ -670,6 +763,9 @@ class MainWindow(QMainWindow):
         actions.setSpacing(10)
         self.btn_open = QPushButton("选择文件")
         self.btn_open.setObjectName("Ghost")
+        self.btn_play = QPushButton("试听")
+        self.btn_play.setObjectName("Ghost")
+        self.btn_play.setEnabled(False)
         self.btn_detect = QPushButton("开始检测")
         self.btn_detect.setObjectName("Primary")
         self.btn_detect.setEnabled(False)
@@ -682,6 +778,7 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.hide()
         actions.addWidget(self.btn_open)
+        actions.addWidget(self.btn_play)
         actions.addWidget(self.btn_detect)
         actions.addSpacing(8)
         actions.addWidget(self.status_label, 1)
@@ -790,6 +887,11 @@ class MainWindow(QMainWindow):
         # 信号
         self.btn_open.clicked.connect(lambda: self.drop_zone._pick_file())
         self.btn_detect.clicked.connect(lambda: self.start_detect(self.waveform.win_start))
+        self.btn_play.clicked.connect(self._on_play_clicked)
+        self.waveform.window_drag_started.connect(self._on_window_drag_started)
+        self.player = AudioPlayer(self)
+        self.player.started.connect(lambda: self.btn_play.setText("停止试听"))
+        self.player.finished.connect(lambda: self.btn_play.setText("试听"))
         self._current_path = None
         self._audio_cache = None
         self.worker = None
@@ -821,6 +923,7 @@ class MainWindow(QMainWindow):
     def on_file_selected(self, path: str):
         self._current_path = path
         self._audio_cache = None
+        self.btn_play.setEnabled(False)
         p = Path(path)
         self.file_card.setText(f"当前文件\n{p.name}")
         self.file_card.setToolTip(path)
@@ -856,7 +959,24 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self.on_error)
         self.worker.start()
 
+    def _on_play_clicked(self):
+        if self.player.is_playing():
+            self.player.stop()
+        else:
+            self._play_window()
+
+    def _play_window(self):
+        if self._audio_cache is None:
+            return
+        self.player.play(self._audio_cache, self.waveform.win_start, PLAY_SAMPLES)
+
+    def _on_window_drag_started(self):
+        # 拖动开始前若正在试听, 立即中断; 拖动结束后由 on_window_moved 自动重播新窗口
+        if self.player.is_playing():
+            self.player.stop()
+
     def on_window_moved(self, win_start: int):
+        self._play_window()  # 拖动结束 → 自动试听新窗口
         if self._audio_cache is None or self.worker is not None and self.worker.isRunning():
             return
         self.start_detect(win_start)
@@ -865,6 +985,7 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.btn_open.setEnabled(True)
         self.btn_detect.setEnabled(True)
+        self.btn_play.setEnabled(True)
 
         audio = r["audio"]
         self._audio_cache = audio
